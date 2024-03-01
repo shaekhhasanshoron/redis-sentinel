@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: redis
+  labels:
+    app: redis
+    app.kubernetes.io/component: redis
+    app.kubernetes.io/instance: redis
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      tolerations:
+        - key: "kc-node"
+          operator: "Equal"
+          value: "alpha"
+          effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: redis
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+      initContainers:
+        - name: config
+          image: redis:3.0.7
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
+          command: [ "sh", "-c", "/scripts/redis_init.sh" ]
+          volumeMounts:
+            - name: redis-config
+              mountPath: /etc/redis/
+            - name: config
+              mountPath: /tmp/redis/
+            - name: init-script
+              mountPath: /scripts/
+      containers:
+        - name: redis
+          image: redis:3.0.7
+          command: ["redis-server"]
+          args: ["/etc/redis/redis.conf"]
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4G
+            requests:
+              cpu: "2"
+              memory: 2G
+          ports:
+            - containerPort: 6379
+              name: redis
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: redis-config
+              mountPath: /etc/redis/
+            - name: data
+              mountPath: /var/log/redis
+      volumes:
+        - name: redis-config
+          emptyDir: {}
+        - name: init-script
+          configMap:
+            name: redis-init-script
+            defaultMode: 0777
+            items:
+              - key: redis_init.sh
+                path: redis_init.sh
+        - name: config
+          configMap:
+            name: redis-config
+            items:
+              - key: redis.conf
+                path: redis.conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        namespace: redis
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: "standard-rwo"
+        resources:
+          requests:
+            storage: 5Gi

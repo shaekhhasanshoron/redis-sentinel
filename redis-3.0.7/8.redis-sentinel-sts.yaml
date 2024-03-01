@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-sentinel
+  namespace: redis
+  labels:
+    app: redis-sentinel
+spec:
+  serviceName: redis-sentinel
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      tolerations:
+        - key: "kc-node"
+          operator: "Equal"
+          value: "alpha"
+          effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: redis-sentinel
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+      initContainers:
+        - name: config
+          image: redis:3.0.7
+          env:
+            - name: REDIS_NODES
+              valueFrom:
+                configMapKeyRef:
+                  name: redis-config
+                  key: REDIS_NODES
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
+          command: [ "sh", "-c", "/scripts/sentinel_init.sh" ]
+          volumeMounts:
+            - name: redis-config
+              mountPath: /etc/redis/
+            - name: init-script
+              mountPath: /scripts/
+      containers:
+        - name: sentinel
+          image: redis:3.0.7
+          resources:
+            limits:
+              cpu: "500m"
+              memory: 500Mi
+            requests:
+              cpu: "500m"
+              memory: 500Mi
+          command: ["redis-sentinel"]
+          args: ["/etc/redis/sentinel.conf"]
+          ports:
+            - containerPort: 26379
+              name: sentinel
+          volumeMounts:
+            - name: redis-config
+              mountPath: /etc/redis/
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: init-script
+          configMap:
+            name: redis-sentinel-init-script
+            defaultMode: 0777
+            items:
+              - key: sentinel_init.sh
+                path: sentinel_init.sh
+        - name: redis-config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        namespace: redis
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: "standard-rwo"
+        resources:
+          requests:
+            storage: 500Mi
